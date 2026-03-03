@@ -1,72 +1,164 @@
 import win32com.client
 from skyfield.api import load, Topos
 import time
-LAT, LON = '32.0616 N', '35.1222 E'
-print("1. Attempting to initialize ASCOM...")
-try:
-    scope = win32com.client.Dispatch("ASCOM.CPWI.Telescope")
-    print("2. Driver Dispatched. Now connecting to telescope (make sure CPWI is open)...")
+import threading
+import tracker  # וודא שהקובץ tracker.py באותה תיקייה
 
-    scope.Connected = True
-    print("3. SUCCESS! Telescope is connected and ready.")
+# --- הגדרות מיקום ---
+MY_LAT = 32.1065
+MY_LON = 35.2070
+MY_ALT = 713
 
-except Exception as e:
-    print(f"!!! ERROR: {e}")
+# --- הגדרות בטיחות ---
+MIN_SAFE_ALTITUDE = 10.0
+
+# --- פונקציית עזר: תנועה עם אפשרות עצירה ---
+def safe_move(scope, az, alt, target_name="Target"):
+    """
+    פונקציה שמבצעת תנועה (Slew) ומאפשרת למשתמש לכתוב stop כדי לעצור באמצע.
+    """
+    try:
+        print(f"\n>>> Moving to {target_name} (Az: {az:.2f}, Alt: {alt:.2f})...")
+
+        # 1. הכנות לתנועה
+        if scope.AtPark:
+            scope.Unpark()
+
+        # וודא שהעקיבה דלוקה (אחרת GoTo נכשל בחלק מהדגמים)
+        if not scope.Tracking:
+            scope.Tracking = True
+
+        # 2. התחלת תנועה אסינכרונית
+        scope.SlewToAltAzAsync(float(az), float(alt))
+        time.sleep(1.0) # תן לזה רגע להתחיל
+
+        # 3. הכנת מנגנון העצירה
+        stop_flag = []
+
+        def wait_for_stop():
+            # ההודעה תופיע פעם אחת
+            print("   [Type 'stop' + Enter to ABORT, or wait for arrival]")
+            user_text = input()
+            if user_text.strip().lower() == 'stop':
+                stop_flag.append(True)
+
+        # הרצת ה-input ברקע
+        t = threading.Thread(target=wait_for_stop)
+        t.daemon = True
+        t.start()
+
+        # 4. לולאת המתנה
+        aborted = False
+        while scope.Slewing:
+            if stop_flag:
+                print("\n!!! STOP COMMAND RECEIVED !!!")
+                scope.AbortSlew()
+                aborted = True
+                break
+            time.sleep(0.2)
+
+        # 5. סיום
+        if not aborted:
+            print(f"\n[V] Reached {target_name}.")
+            # הערה: ה-input עדיין מחכה לאנטר כי הוא "נתקע" שם.
+            print("(Press Enter to continue back to menu...)")
+
+    except Exception as e:
+        print(f"Error during movement: {e}")
+        try: scope.AbortSlew()
+        except: pass
+
+
 def run_telescope_control():
-    scope = win32com.client.Dispatch("ASCOM.CPWI.Telescope")
-    scope.Connected = True
+    print("1. Initializing ASCOM...")
+    try:
+        scope = win32com.client.Dispatch("ASCOM.CPWI.Telescope")
+        scope.Connected = True
+        print("2. SUCCESS! Telescope connected.")
+    except Exception as e:
+        print(f"!!! ERROR: {e}")
+        return
 
+    print("Loading Skyfield data...")
     planets = load('de421.bsp')
     earth = planets['earth']
     ts = load.timescale()
+    my_location = earth + Topos(latitude_degrees=MY_LAT,longitude_degreesnode -v=MY_LON, elevation_m=MY_ALT)
 
     while True:
-        user_input = input("\nלאן לכוון? (moon, sun, north, or exit): ").strip().lower()
+        print("\n==============================")
+        print("--- TELESCOPE CONTROL MENU ---")
+        print("Options: track, gps, north, moon, mars/jupiter..., exit")
+        user_input = input("Command: ").strip().lower()
 
         if user_input == 'exit':
+            try: scope.AbortSlew()
+            except: pass
             break
 
-        # טיפול מיוחד בפקודת צפון
+        # --- אופציה 1: עקיבת מצלמה (Tracker) ---
+        if user_input == 'track':
+            print("\n>>> Starting Camera Tracker...")
+            # לטרקר יש לולאה משלו, שם העצירה היא בדרך כלל 'q' על חלון הוידאו
+            tracker.start_tracking(scope)
+            continue
+
+        # --- אופציה 2: GPS ידני ---
+        if user_input == 'gps':
+            try:
+                lat = float(input("Target Latitude: "))
+                lon = float(input("Target Longitude: "))
+                alt_m = float(input("Target Altitude (m): "))
+
+                target = earth + Topos(latitude_degrees=lat, longitude_degrees=lon, elevation_m=alt_m)
+                t = ts.now()
+                alt, az, distance = my_location.at(t).observe(target).apparent().altaz()
+
+                print(f"Calculated: Az={az.degrees:.2f}, Alt={alt.degrees:.2f}, Dist={distance.km:.2f}km")
+
+                if alt.degrees < 0:
+                    print("ERROR: Target is BELOW HORIZON.")
+                    continue
+
+                # שימוש בפונקציה החדשה
+                if input("Slew? (y/n): ") == 'y':
+                    safe_move(scope, az.degrees, alt.degrees, "GPS Target")
+
+            except Exception as e:
+                print(f"Error: {e}")
+            continue
+
+        # --- אופציה 3: איפוס צפון ---
         if user_input == 'north':
-            print("Moving to Home Position (North & Horizon)...")
-            scope.SlewToAltAz(0.0, 0.0) # פקודה ישירה למיקום פיזי
-            while scope.Slewing:
-                print(f"Slewing to North... Current Alt: {scope.Altitude:.2f}")
-                time.sleep(1)
-            print("Telescope is now facing North!")
-            continue # חוזר לתחילת הלולאה לבקש יעד חדש
+            # שימוש בפונקציה החדשה - פשוט מאוד!
+            safe_move(scope, 0.0, 0.0, "North")
+            continue
 
-        # התאמת שם הגוף לקובץ הנתונים עבור גרמי שמיים
-        if user_input == 'moon':
-            target_key = 'moon'
-            tracking_type = 1 # Lunar
-        elif user_input == 'sun':
-            target_key = 'sun'
-            tracking_type = 2 # Solar
-        else:
-            target_key = f"{user_input} barycenter"
-            tracking_type = 0 # Sidereal
+        # --- אופציה 4: כוכבים וירח ---
+        if user_input in ['moon', 'mars', 'jupiter', 'saturn', 'venus']:
+            try:
+                target_key = 'moon' if user_input == 'moon' else f"{user_input} barycenter"
+                t = ts.now()
+                alt, az, _ = my_location.at(t).observe(planets[target_key]).apparent().altaz()
 
-        try:
-            target_obj = planets[target_key] # שינינו ל-target_obj כדי למנוע בלבול
-            t = ts.now()
-            # חישוב מיקום בשמיים
-            alt, az, _ = (earth + Topos(LAT, LON)).at(t).observe(target_obj).apparent().altaz()
+                print(f"Target: {user_input.upper()} (Alt: {alt.degrees:.2f})")
+                if alt.degrees <= 0:
+                    print("Target is below horizon.")
+                    continue
 
-            if alt.degrees < 0:
-                print(f"היעד {user_input} נמצא כרגע מתחת לאופק ({alt.degrees:.2f} מעלות).")
-                continue
+                # הגדרת קצב עקיבה מיוחד לירח לפני התנועה
+                if user_input == 'moon':
+                    try: scope.TrackingRate = 1 # Lunar
+                    except: pass
+                else:
+                    try: scope.TrackingRate = 0 # Sidereal
+                    except: pass
+                # שימוש בפונקציה החדשה
+                if input("Slew? (y/n): ") == 'y':
+                    safe_move(scope, az.degrees, alt.degrees, user_input.upper())
 
-            scope.TrackingRate = tracking_type
-            print(f"מכוון ל-{user_input} (Az: {az.degrees:.2f}, Alt: {alt.degrees:.2f})...")
-            scope.SlewToAltAzAsync(az.degrees, alt.degrees)
+            except Exception as e:
+                print(f"Error: {e}")
 
-            stop_input = input("הקלד 'stop' לעצירה: ").strip().lower()
-            if stop_input == 'stop':
-                scope.AbortSlew()
-                print("נעצר.")
-
-        except Exception as e:
-            print(f"שגיאה: {e}. וודא שהשם נכון (למשל 'jupiter' ולא 'jupitrr')")
 if __name__ == "__main__":
     run_telescope_control()
