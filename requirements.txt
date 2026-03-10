@@ -1,0 +1,15 @@
+# TelescopeAI — Python dependencies
+# Install with: pip install -r requirements.txt
+
+# Computer vision and tracking
+opencv-python>=4.8
+numpy>=1.24
+
+# Astronomy / ephemeris
+skyfield>=1.46
+
+# ASCOM telescope driver (Windows only)
+pywin32>=306
+
+# Configuration
+pyyaml>=6.0

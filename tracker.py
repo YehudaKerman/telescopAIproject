@@ -1,165 +1,190 @@
-import win32com.client
-from skyfield.api import load, Topos
+"""
+tracker.py — TelescopeAI Camera Tracker
+
+Pipeline:
+  1. Frame-difference motion detection (Scanning mode)
+  2. CSRT lock once movement confirmed over threshold
+  3. PID controller converts pixel error -> mount rate (deg/sec)
+  4. scope.MoveAxis() sends rate commands to ASCOM telescope
+
+Call: tracker.start_tracking(scope)
+"""
+import cv2
+import math
 import time
-import threading
-import tracker  # וודא שהקובץ tracker.py באותה תיקייה
+from pid_controller import PIDController
 
-# --- הגדרות מיקום ---
-MY_LAT = 32.1065
-MY_LON = 35.2070
-MY_ALT = 713
+# --- קונפיגורציה ---
+# pixel_scale: degrees per pixel. תלוי בעדשה וחיישן.
+# ZWO ASI183MC + 500mm focal length ≈ 0.00087 deg/px
+# webcam 640px wide, ~60° FOV ≈ 0.094 deg/px
+PIXEL_SCALE = 0.094          # deg/pixel (ערך ברירת מחדל לווובקאם — שנה לפי ציוד)
+MOVEMENT_THRESHOLD = 50      # פיקסלים — תנועה מינימלית לנעילה
+MAX_PATIENCE = 60            # פריימים לפני ויתור על יעד שאבד
+MIN_CONTOUR_AREA = 500       # פיקסלים² — סינון רעש
+CAMERA_INDEX = 0             # אינדקס מצלמה
+CAMERA_EXPOSURE = -6         # חשיפה (שלילי = קצר, לשמיים פתוחים)
 
-# --- הגדרות בטיחות ---
-MIN_SAFE_ALTITUDE = 10.0
 
-# --- פונקציית עזר: תנועה עם אפשרות עצירה ---
-def safe_move(scope, az, alt, target_name="Target"):
+def start_tracking(scope, pixel_scale: float = PIXEL_SCALE):
     """
-    פונקציה שמבצעת תנועה (Slew) ומאפשרת למשתמש לכתוב stop כדי לעצור באמצע.
+    מפעיל עקיבת מצלמה ומסובב את הטלסקופ לשמור על היעד במרכז.
+
+    Args:
+        scope: אובייקט ASCOM telescope (win32com.client.Dispatch)
+        pixel_scale: יחס המרה deg/pixel (תלוי בעדשה וחיישן)
     """
-    try:
-        print(f"\n>>> Moving to {target_name} (Az: {az:.2f}, Alt: {alt:.2f})...")
+    pid_az  = PIDController(kp=0.4, ki=0.005, kd=0.08, output_limits=(-3.5, 3.5))
+    pid_alt = PIDController(kp=0.4, ki=0.005, kd=0.08, output_limits=(-3.5, 3.5))
 
-        # 1. הכנות לתנועה
-        if scope.AtPark:
-            scope.Unpark()
-
-        # וודא שהעקיבה דלוקה (אחרת GoTo נכשל בחלק מהדגמים)
-        if not scope.Tracking:
-            scope.Tracking = True
-
-        # 2. התחלת תנועה אסינכרונית
-        scope.SlewToAltAzAsync(float(az), float(alt))
-        time.sleep(1.0) # תן לזה רגע להתחיל
-
-        # 3. הכנת מנגנון העצירה
-        stop_flag = []
-
-        def wait_for_stop():
-            # ההודעה תופיע פעם אחת
-            print("   [Type 'stop' + Enter to ABORT, or wait for arrival]")
-            user_text = input()
-            if user_text.strip().lower() == 'stop':
-                stop_flag.append(True)
-
-        # הרצת ה-input ברקע
-        t = threading.Thread(target=wait_for_stop)
-        t.daemon = True
-        t.start()
-
-        # 4. לולאת המתנה
-        aborted = False
-        while scope.Slewing:
-            if stop_flag:
-                print("\n!!! STOP COMMAND RECEIVED !!!")
-                scope.AbortSlew()
-                aborted = True
-                break
-            time.sleep(0.2)
-
-        # 5. סיום
-        if not aborted:
-            print(f"\n[V] Reached {target_name}.")
-            # הערה: ה-input עדיין מחכה לאנטר כי הוא "נתקע" שם.
-            print("(Press Enter to continue back to menu...)")
-
-    except Exception as e:
-        print(f"Error during movement: {e}")
-        try: scope.AbortSlew()
-        except: pass
-
-
-def run_telescope_control():
-    print("1. Initializing ASCOM...")
-    try:
-        scope = win32com.client.Dispatch("ASCOM.CPWI.Telescope")
-        scope.Connected = True
-        print("2. SUCCESS! Telescope connected.")
-    except Exception as e:
-        print(f"!!! ERROR: {e}")
+    cap = cv2.VideoCapture(CAMERA_INDEX, cv2.CAP_DSHOW)
+    if not cap.isOpened():
+        print("[TRACKER] ERROR: Camera not found.")
         return
 
-    print("Loading Skyfield data...")
-    planets = load('de421.bsp')
-    earth = planets['earth']
-    ts = load.timescale()
-    # Corrected the typo in longitude_degrees
-    my_location = earth + Topos(latitude_degrees=MY_LAT, longitude_degrees=MY_LON, elevation_m=MY_ALT)
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+    cap.set(cv2.CAP_PROP_EXPOSURE, CAMERA_EXPOSURE)
 
-    while True:
-        print("\n==============================")
-        print("--- TELESCOPE CONTROL MENU ---")
-        print("Options: track, gps, north, moon, mars/jupiter..., exit")
-        user_input = input("Command: ").strip().lower()
+    csrt_tracker = None
+    is_tracking = False
+    prev_gray = None
+    potential_target = None
+    patience_counter = 0
 
-        if user_input == 'exit':
-            try: scope.AbortSlew()
-            except: pass
-            break
+    print("[TRACKER] Started. Press 'q' on the video window to stop, 'r' to reset.")
 
-        # --- אופציה 1: עקיבת מצלמה (Tracker) ---
-        if user_input == 'track':
-            print("\n>>> Starting Camera Tracker...")
-            # לטרקר יש לולאה משלו, שם העצירה היא בדרך כלל 'q' על חלון הוידאו
-            tracker.start_tracking(scope)
-            continue
+    try:
+        while True:
+            ret, frame = cap.read()
+            if not ret:
+                print("[TRACKER] Camera read failed.")
+                break
 
-        # --- אופציה 2: GPS ידני ---
-        if user_input == 'gps':
-            try:
-                lat = float(input("Target Latitude: "))
-                lon = float(input("Target Longitude: "))
-                alt_m = float(input("Target Altitude (m): "))
+            h, w = frame.shape[:2]
+            frame_cx, frame_cy = w // 2, h // 2
 
-                target = earth + Topos(latitude_degrees=lat, longitude_degrees=lon, elevation_m=alt_m)
-                t = ts.now()
-                alt, az, distance = my_location.at(t).observe(target).apparent().altaz()
+            # ==================== מצב עקיבה ====================
+            if is_tracking:
+                success, box = csrt_tracker.update(frame)
 
-                print(f"Calculated: Az={az.degrees:.2f}, Alt={alt.degrees:.2f}, Dist={distance.km:.2f}km")
+                if success:
+                    patience_counter = MAX_PATIENCE
+                    x, y, bw, bh = [int(v) for v in box]
+                    obj_x = x + bw // 2
+                    obj_y = y + bh // 2
 
-                if alt.degrees < 0:
-                    print("ERROR: Target is BELOW HORIZON.")
-                    continue
+                    # חישוב שגיאה בדרגות
+                    # ציר x: חיובי = יעד ימינה → Az חיובי
+                    # ציר y: y גדל כלפי מטה, לכן הופך סימן → Alt חיובי
+                    err_x_deg = (obj_x - frame_cx) * pixel_scale
+                    err_y_deg = (frame_cy - obj_y) * pixel_scale
 
-                # שימוש בפונקציה החדשה
-                if input("Slew? (y/n): ") == 'y':
-                    safe_move(scope, az.degrees, alt.degrees, "GPS Target")
+                    rate_az  = pid_az.update(err_x_deg)
+                    rate_alt = pid_alt.update(err_y_deg)
 
-            except Exception as e:
-                print(f"Error: {e}")
-            continue
+                    try:
+                        scope.MoveAxis(0, rate_az)
+                        scope.MoveAxis(1, rate_alt)
+                    except Exception as e:
+                        print(f"[TRACKER] Mount error: {e}")
 
-        # --- אופציה 3: איפוס צפון ---
-        if user_input == 'north':
-            # שימוש בפונקציה החדשה - פשוט מאוד!
-            safe_move(scope, 0.0, 0.0, "North")
-            continue
+                    # ציור
+                    cv2.rectangle(frame, (x, y), (x + bw, y + bh), (0, 255, 0), 2)
+                    cv2.circle(frame, (obj_x, obj_y), 4, (0, 0, 255), -1)
+                    cv2.line(frame, (frame_cx, frame_cy), (obj_x, obj_y), (0, 255, 255), 1)
+                    err_as_x = int(err_x_deg * 3600)
+                    err_as_y = int(err_y_deg * 3600)
+                    cv2.putText(frame, f"LOCKED  err=({err_as_x}\", {err_as_y}\")",
+                                (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 255, 0), 2)
+                    cv2.putText(frame, f"Rate Az={rate_az:.2f} Alt={rate_alt:.2f} deg/s",
+                                (10, 55), cv2.FONT_HERSHEY_SIMPLEX, 0.5, (0, 220, 0), 1)
 
-        # --- אופציה 4: כוכבים וירח ---
-        if user_input in ['moon', 'mars', 'jupiter', 'saturn', 'venus']:
-            try:
-                target_key = 'moon' if user_input == 'moon' else f"{user_input} barycenter"
-                t = ts.now()
-                alt, az, _ = my_location.at(t).observe(planets[target_key]).apparent().altaz()
-
-                print(f"Target: {user_input.upper()} (Alt: {alt.degrees:.2f})")
-                if alt.degrees <= 0:
-                    print("Target is below horizon.")
-                    continue
-
-                # הגדרת קצב עקיבה מיוחד לירח לפני התנועה
-                if user_input == 'moon':
-                    try: scope.TrackingRate = 1 # Lunar
-                    except: pass
                 else:
-                    try: scope.TrackingRate = 0 # Sidereal
-                    except: pass
-                # שימוש בפונקציה החדשה
-                if input("Slew? (y/n): ") == 'y':
-                    safe_move(scope, az.degrees, alt.degrees, user_input.upper())
+                    patience_counter -= 1
+                    cv2.putText(frame, f"LOST... patience={patience_counter}",
+                                (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 165, 255), 2)
 
-            except Exception as e:
-                print(f"Error: {e}")
+                    if patience_counter <= 0:
+                        _stop_mount(scope)
+                        pid_az.reset()
+                        pid_alt.reset()
+                        is_tracking = False
+                        csrt_tracker = None
+                        prev_gray = None
+                        potential_target = None
+                        print("[TRACKER] Target permanently lost. Rescanning...")
 
-if __name__ == "__main__":
-    run_telescope_control()
+            # ==================== מצב סריקה ====================
+            else:
+                gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)
+                gray = cv2.GaussianBlur(gray, (21, 21), 0)
+
+                if prev_gray is not None:
+                    delta = cv2.absdiff(prev_gray, gray)
+                    thresh = cv2.threshold(delta, 25, 255, cv2.THRESH_BINARY)[1]
+                    thresh = cv2.dilate(thresh, None, iterations=2)
+                    contours, _ = cv2.findContours(
+                        thresh, cv2.RETR_EXTERNAL, cv2.CHAIN_APPROX_SIMPLE
+                    )
+
+                    valid = [c for c in contours if cv2.contourArea(c) > MIN_CONTOUR_AREA]
+                    best = max(valid, key=cv2.contourArea, default=None)
+
+                    if best is not None:
+                        x, y, bw, bh = cv2.boundingRect(best)
+                        center = (x + bw // 2, y + bh // 2)
+
+                        if potential_target is not None:
+                            dist = math.hypot(
+                                center[0] - potential_target[0],
+                                center[1] - potential_target[1]
+                            )
+                            cv2.rectangle(frame, (x, y), (x + bw, y + bh), (255, 100, 0), 2)
+
+                            if dist > MOVEMENT_THRESHOLD:
+                                csrt_tracker = cv2.TrackerCSRT_create()
+                                csrt_tracker.init(frame, (x, y, bw, bh))
+                                is_tracking = True
+                                patience_counter = MAX_PATIENCE
+                                print(f"[TRACKER] Locked! movement={dist:.0f}px")
+
+                        potential_target = center
+                    else:
+                        potential_target = None
+                        cv2.putText(frame, "Scanning...",
+                                    (10, 30), cv2.FONT_HERSHEY_SIMPLEX, 0.6, (0, 0, 200), 2)
+
+                prev_gray = gray
+
+            # ==================== ציור כללי ====================
+            cv2.line(frame, (frame_cx, 0), (frame_cx, h), (80, 80, 80), 1)
+            cv2.line(frame, (0, frame_cy), (w, frame_cy), (80, 80, 80), 1)
+            cv2.imshow("TelescopeAI Tracker", frame)
+
+            key = cv2.waitKey(1) & 0xFF
+            if key == ord('q'):
+                break
+            if key == ord('r'):
+                _stop_mount(scope)
+                pid_az.reset()
+                pid_alt.reset()
+                is_tracking = False
+                csrt_tracker = None
+                potential_target = None
+                print("[TRACKER] Manual reset.")
+
+    finally:
+        _stop_mount(scope)
+        cap.release()
+        cv2.destroyAllWindows()
+        print("[TRACKER] Stopped.")
+
+
+def _stop_mount(scope):
+    """עצור את שני צירי המנוע בצורה בטוחה."""
+    try:
+        scope.MoveAxis(0, 0)
+        scope.MoveAxis(1, 0)
+    except Exception:
+        pass

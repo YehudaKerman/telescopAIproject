@@ -12,42 +12,40 @@ MY_ALT = 713
 # --- הגדרות בטיחות ---
 MIN_SAFE_ALTITUDE = 10.0
 
-# --- פונקציית עזר: תנועה עם אפשרות עצירה ---
+
 def safe_move(scope, az, alt, target_name="Target"):
     """
     פונקציה שמבצעת תנועה (Slew) ומאפשרת למשתמש לכתוב stop כדי לעצור באמצע.
     """
+    # בדיקת בטיחות: לא לכוון מתחת לגובה מינימלי
+    if alt < MIN_SAFE_ALTITUDE:
+        print(f"ERROR: Alt={alt:.1f}° is below MIN_SAFE_ALTITUDE ({MIN_SAFE_ALTITUDE}°). Slew aborted.")
+        return
+
     try:
         print(f"\n>>> Moving to {target_name} (Az: {az:.2f}, Alt: {alt:.2f})...")
 
-        # 1. הכנות לתנועה
         if scope.AtPark:
             scope.Unpark()
 
-        # וודא שהעקיבה דלוקה (אחרת GoTo נכשל בחלק מהדגמים)
         if not scope.Tracking:
             scope.Tracking = True
 
-        # 2. התחלת תנועה אסינכרונית
         scope.SlewToAltAzAsync(float(az), float(alt))
-        time.sleep(1.0) # תן לזה רגע להתחיל
+        time.sleep(1.0)
 
-        # 3. הכנת מנגנון העצירה
         stop_flag = []
 
         def wait_for_stop():
-            # ההודעה תופיע פעם אחת
             print("   [Type 'stop' + Enter to ABORT, or wait for arrival]")
             user_text = input()
             if user_text.strip().lower() == 'stop':
                 stop_flag.append(True)
 
-        # הרצת ה-input ברקע
         t = threading.Thread(target=wait_for_stop)
         t.daemon = True
         t.start()
 
-        # 4. לולאת המתנה
         aborted = False
         while scope.Slewing:
             if stop_flag:
@@ -57,10 +55,8 @@ def safe_move(scope, az, alt, target_name="Target"):
                 break
             time.sleep(0.2)
 
-        # 5. סיום
         if not aborted:
             print(f"\n[V] Reached {target_name}.")
-            # הערה: ה-input עדיין מחכה לאנטר כי הוא "נתקע" שם.
             print("(Press Enter to continue back to menu...)")
 
     except Exception as e:
@@ -83,7 +79,7 @@ def run_telescope_control():
     planets = load('de421.bsp')
     earth = planets['earth']
     ts = load.timescale()
-    my_location = earth + Topos(latitude_degrees=MY_LAT,longitude_degreesnode -v=MY_LON, elevation_m=MY_ALT)
+    my_location = earth + Topos(latitude_degrees=MY_LAT, longitude_degrees=MY_LON, elevation_m=MY_ALT)
 
     while True:
         print("\n==============================")
@@ -96,14 +92,11 @@ def run_telescope_control():
             except: pass
             break
 
-        # --- אופציה 1: עקיבת מצלמה (Tracker) ---
         if user_input == 'track':
             print("\n>>> Starting Camera Tracker...")
-            # לטרקר יש לולאה משלו, שם העצירה היא בדרך כלל 'q' על חלון הוידאו
             tracker.start_tracking(scope)
             continue
 
-        # --- אופציה 2: GPS ידני ---
         if user_input == 'gps':
             try:
                 lat = float(input("Target Latitude: "))
@@ -120,7 +113,6 @@ def run_telescope_control():
                     print("ERROR: Target is BELOW HORIZON.")
                     continue
 
-                # שימוש בפונקציה החדשה
                 if input("Slew? (y/n): ") == 'y':
                     safe_move(scope, az.degrees, alt.degrees, "GPS Target")
 
@@ -128,13 +120,10 @@ def run_telescope_control():
                 print(f"Error: {e}")
             continue
 
-        # --- אופציה 3: איפוס צפון ---
         if user_input == 'north':
-            # שימוש בפונקציה החדשה - פשוט מאוד!
-            safe_move(scope, 0.0, 0.0, "North")
+            safe_move(scope, 0.0, MIN_SAFE_ALTITUDE, "North")
             continue
 
-        # --- אופציה 4: כוכבים וירח ---
         if user_input in ['moon', 'mars', 'jupiter', 'saturn', 'venus']:
             try:
                 target_key = 'moon' if user_input == 'moon' else f"{user_input} barycenter"
@@ -146,14 +135,13 @@ def run_telescope_control():
                     print("Target is below horizon.")
                     continue
 
-                # הגדרת קצב עקיבה מיוחד לירח לפני התנועה
                 if user_input == 'moon':
-                    try: scope.TrackingRate = 1 # Lunar
+                    try: scope.TrackingRate = 1  # Lunar
                     except: pass
                 else:
-                    try: scope.TrackingRate = 0 # Sidereal
+                    try: scope.TrackingRate = 0  # Sidereal
                     except: pass
-                # שימוש בפונקציה החדשה
+
                 if input("Slew? (y/n): ") == 'y':
                     safe_move(scope, az.degrees, alt.degrees, user_input.upper())
 
