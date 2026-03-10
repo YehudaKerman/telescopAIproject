@@ -1,0 +1,69 @@
+# TelescopeAI — Unified Configuration
+# Edit this file, then run: python find_landmarks.py
+
+location:
+  latitude: 32.1065          # decimal degrees, WGS84
+  longitude: 35.2070
+  altitude_m: 713            # meters above sea level
+
+# ---------------------------------------------------------------------------
+# Landmarks for daytime mount alignment.
+# Add entries using: python find_landmarks.py --add
+# Coordinates: Google Maps -> right-click -> copy lat/lon
+# Altitude:    Google Earth (right-click point -> "What's here?")
+# ---------------------------------------------------------------------------
+landmarks:
+  - name: "הר עיבל — פסגה"
+    lat: 32.2195
+    lon: 35.2810
+    alt_m: 940
+    notes: "פסגה בולטת לצפון-מזרח, ~14km"
+
+  - name: "הר גריזים — פסגה"
+    lat: 32.1985
+    lon: 35.2709
+    alt_m: 881
+    notes: "פסגה לצפון-מזרח, ~11km"
+
+  # --- מלא אחרי שזיהית בGoogle Earth ---
+  # - name: "מגדל מים אריאל"
+  #   lat: 32.XXXX
+  #   lon: 35.XXXX
+  #   alt_m: XXX
+  #   notes: "מגדל מים בשכונה X"
+  #
+  # - name: "אנטנת סלקום גבעה צפונית"
+  #   lat: 32.XXXX
+  #   lon: 35.XXXX
+  #   alt_m: XXX
+
+tracking:
+  pixel_scale: 0.094         # deg/pixel — יעודכן אוטומטית ע"י calibration.py
+  camera_roll_deg: 0.0       # rotation of camera relative to mount Az axis
+  movement_threshold_px: 50  # min movement (px) to lock onto target
+  patience_frames: 60        # frames before giving up on lost target
+  pid_kp: 0.4
+  pid_ki: 0.005
+  pid_kd: 0.08
+
+camera:
+  index: 0                   # cv2.VideoCapture index (0 = first camera)
+  exposure: -6               # negative = short exposure (for bright sky)
+  width: 640
+  height: 480
+
+mount:
+  driver: "ASCOM.CPWI.Telescope"
+  move_rate_deg_per_sec: 1.0    # rate used during calibration moves
+  calibration_move_deg: 2.0    # how many degrees to move per calibration step
+
+# ---------------------------------------------------------------------------
+# Calibration results — written automatically by calibration.py
+# ---------------------------------------------------------------------------
+calibration:
+  pixel_scale: null
+  camera_roll_deg: null
+  az_offset_deg: null
+  alt_offset_deg: null
+  calibrated_at: null
+  method: null
