@@ -13,17 +13,25 @@ import cv2
 import math
 import time
 from pid_controller import PIDController
+from utils.config import load_config
 
-# --- קונפיגורציה ---
-# pixel_scale: degrees per pixel. תלוי בעדשה וחיישן.
-# ZWO ASI183MC + 500mm focal length ≈ 0.00087 deg/px
-# webcam 640px wide, ~60° FOV ≈ 0.094 deg/px
-PIXEL_SCALE = 0.094          # deg/pixel (ערך ברירת מחדל לווובקאם — שנה לפי ציוד)
-MOVEMENT_THRESHOLD = 50      # פיקסלים — תנועה מינימלית לנעילה
-MAX_PATIENCE = 60            # פריימים לפני ויתור על יעד שאבד
-MIN_CONTOUR_AREA = 500       # פיקסלים² — סינון רעש
-CAMERA_INDEX = 0             # אינדקס מצלמה
-CAMERA_EXPOSURE = -6         # חשיפה (שלילי = קצר, לשמיים פתוחים)
+# --- טעינת קונפיגורציה ---
+_cfg = load_config()
+_tracking = _cfg['tracking']
+_camera = _cfg['camera']
+
+PIXEL_SCALE = _tracking['pixel_scale']          # deg/pixel
+MOVEMENT_THRESHOLD = _tracking['movement_threshold_px']  # פיקסלים — תנועה מינימלית לנעילה
+MAX_PATIENCE = _tracking['patience_frames']      # פריימים לפני ויתור על יעד שאבד
+MIN_CONTOUR_AREA = 500                           # פיקסלים² — סינון רעש (לא ב-config)
+CAMERA_INDEX = _camera['index']
+CAMERA_EXPOSURE = _camera['exposure']
+CAMERA_WIDTH = _camera['width']
+CAMERA_HEIGHT = _camera['height']
+
+_PID_KP = _tracking['pid_kp']
+_PID_KI = _tracking['pid_ki']
+_PID_KD = _tracking['pid_kd']
 
 
 def start_tracking(scope, pixel_scale: float = PIXEL_SCALE):
@@ -34,16 +42,16 @@ def start_tracking(scope, pixel_scale: float = PIXEL_SCALE):
         scope: אובייקט ASCOM telescope (win32com.client.Dispatch)
         pixel_scale: יחס המרה deg/pixel (תלוי בעדשה וחיישן)
     """
-    pid_az  = PIDController(kp=0.4, ki=0.005, kd=0.08, output_limits=(-3.5, 3.5))
-    pid_alt = PIDController(kp=0.4, ki=0.005, kd=0.08, output_limits=(-3.5, 3.5))
+    pid_az  = PIDController(kp=_PID_KP, ki=_PID_KI, kd=_PID_KD, output_limits=(-3.5, 3.5))
+    pid_alt = PIDController(kp=_PID_KP, ki=_PID_KI, kd=_PID_KD, output_limits=(-3.5, 3.5))
 
     cap = cv2.VideoCapture(CAMERA_INDEX, cv2.CAP_DSHOW)
     if not cap.isOpened():
         print("[TRACKER] ERROR: Camera not found.")
         return
 
-    cap.set(cv2.CAP_PROP_FRAME_WIDTH, 640)
-    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, 480)
+    cap.set(cv2.CAP_PROP_FRAME_WIDTH, CAMERA_WIDTH)
+    cap.set(cv2.CAP_PROP_FRAME_HEIGHT, CAMERA_HEIGHT)
     cap.set(cv2.CAP_PROP_EXPOSURE, CAMERA_EXPOSURE)
 
     csrt_tracker = None

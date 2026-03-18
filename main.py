@@ -3,11 +3,13 @@ from skyfield.api import load, Topos
 import time
 import threading
 import tracker  # וודא שהקובץ tracker.py באותה תיקייה
+from utils.config import load_config
 
-# --- הגדרות מיקום ---
-MY_LAT = 32.1065
-MY_LON = 35.2070
-MY_ALT = 713
+# --- טעינת קונפיגורציה ---
+_cfg = load_config()
+MY_LAT = _cfg['location']['latitude']
+MY_LON = _cfg['location']['longitude']
+MY_ALT = _cfg['location']['altitude_m']
 
 # --- הגדרות בטיחות ---
 MIN_SAFE_ALTITUDE = 10.0
