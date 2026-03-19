@@ -1,83 +1,75 @@
 # Session Handoff — 2026-03-19
 
-## 🎯 Current Task
-חיבור Raspberry Pi + deploy של TelescopeAI עליו
+## 🎯 Next Session — RPi Deploy (B+ architecture)
 
-## ✅ Completed (סשנים קודמים)
-ריפקטורינג מלא הושלם ונדחף ל-GitHub:
-- `hardware/` — ASCOM + INDI + Mock backends
-- `camera/` — OpenCV + ZWO + Mock backends
-- `core/` — tracker, session, PID
-- `utils/` — geometry, logger, config
-- `tests/` — 30/30 passing
-- `main.py` — שוכתב מחדש
-- קומיט: `7245167` על `main`
-- ענף `pre-refactor` → `d837b81` (קוד ישן שמור)
+## ✅ Completed
+ריפקטורינג מלא + git commit `b963a0a` על main.
+ענף `pre-refactor` → `d837b81` שמור ב-GitHub.
 
-## ❗ Next Session — Raspberry Pi Setup
+## 🏗️ Architecture Decision (סגור)
 
-### מה צריך לדעת לפני:
-- הקוד כבר תומך ב-INDI (`hardware/indi_driver.py`) — רק צריך להגדיר `config.yaml`
-- ה-RPi צריך: Python 3.10+, indiserver, opencv, pyyaml, skyfield
+**B+: tracker רץ ב-RPi, Windows רואה בלבד**
 
-### שלבים לביצוע:
-
-#### 1. בדיקת חיבור RPi
-```bash
-ssh pi@<RPi_IP>
-python3 --version
+```
+RPi:     ZWO → tracker → PID → indiserver → Celestron
+                  ↓ (annotated frames)
+         Flask MJPEG stream (port 8080)
+                  ↓ חד-כיווני
+Windows: cv2.imshow()  ← רואה ריבוע מעקב בלבד
 ```
 
-#### 2. Clone הקוד ל-RPi
+- Loop control: ~30-80ms (מקומי ב-RPi)
+- WiFi lag: משפיע רק על תצוגה, לא על מעקב
+- תומך ברחפן/מטוס (latency מספיק נמוך)
+
+## ❗ מה לבנות הסשן הבא
+
+### שלב 1 — הגדרת RPi
 ```bash
-git clone https://github.com/YehudaKerman/telescopAIproject.git
-cd telescopAIproject
-pip3 install -r requirements.txt
-# אם ZWO: pip3 install zwoasi
+ssh pi@<IP>
+sudo apt install indiserver indi-celestron libindi-dev
+pip3 install pyindi-client zwoasi flask opencv-python pyyaml skyfield
 ```
 
-#### 3. עדכון config.yaml ל-INDI
+### שלב 2 — קבצים חדשים לכתוב
+| קובץ | תפקיד |
+|------|-------|
+| `rpi/stream_server.py` | Flask MJPEG — שולח פריימים מוערחים |
+| `main_rpi.py` | entry point ל-RPi (INDI + ZWO + tracker + stream) |
+| `main_remote.py` | entry point ל-Windows (תצוגה + פקודות) |
+| `rpi/requirements_rpi.txt` | deps ל-RPi |
+
+### שלב 3 — עדכון config.yaml
 ```yaml
 mount:
   backend: "indi"
-
 indi:
-  host: "localhost"    # או IP של RPi אם מריצים מרחוק
-  port: 7624
-  device_name: "Telescope Simulator"  # לשנות לשם האמיתי
+  host: "localhost"
+  device_name: "Celestron GPS"   # לוודא עם indiserver
 
 camera:
-  backend: "opencv"
-  index: 0
+  backend: "zwo"
+  sdk_path: "/usr/lib/libASICamera2.so"
+
+stream:
+  port: 8080
+  quality: 70       # JPEG quality 0-100
+  fps_limit: 20     # לא לעמיס את הרשת
 ```
 
-#### 4. הרצת indiserver על RPi
-```bash
-indiserver -v indi_eqmod_telescope   # או הדרייבר הנכון לטלסקופ
+## ❓ שאלה פתוחה לתחילת הסשן
+רשת בשדה: RPi כ-hotspot עצמאי, או שניהם על ראוטר?
+
+## 📁 State
 ```
-
-#### 5. בדיקת חיבור INDI
-```python
-from utils.config import load_config
-from hardware import driver_factory
-cfg = load_config()
-d = driver_factory(cfg)
-d.connect()
-print(d.azimuth, d.altitude)
+telescopAIproject/
+├── main_rpi.py        ← לכתוב
+├── main_remote.py     ← לכתוב
+├── rpi/               ← לכתוב
+│   ├── stream_server.py
+│   └── requirements_rpi.txt
+├── core/tracker.py    ✅ מוכן (יפעל ב-RPi ללא שינוי)
+├── hardware/indi_driver.py ✅ מוכן
+├── camera/zwo_camera.py    ✅ מוכן (לבדוק על RPi)
+└── tests/             ✅ 30/30
 ```
-
-#### 6. הרצה מלאה
-```bash
-python3 main.py
-```
-
-### ❓ שאלות פתוחות לברר עם המשתמש:
-- איזה mount בדיוק? (EQ5? EQMod? CelestronCGX?)
-- איזה דרייבר INDI? (indi_eqmod_telescope? indi_celestron_gps?)
-- ה-RPi ו-Windows על אותו רשת? (לבדיקת INDI over network)
-- ZWO ASI183MC מחובר ל-RPi או ל-Windows?
-
-## 📁 Important Files
-- `hardware/indi_driver.py` — INDI driver מלא, צריך לוודא device_name
-- `config.yaml` — לשנות backend ל-"indi" ולמלא indi.device_name
-- `requirements.txt` — תקין, pyindi-client מוגדר כהערה (uncomment ב-RPi)
