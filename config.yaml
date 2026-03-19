@@ -47,15 +47,31 @@ tracking:
   pid_kd: 0.08
 
 camera:
-  index: 0                   # cv2.VideoCapture index (0 = first camera)
-  exposure: -6               # negative = short exposure (for bright sky)
+  backend: "opencv"           # "opencv" (webcam) | "zwo" (ASI183MC) | "mock" (tests)
+  index: 0                    # cv2.VideoCapture index (0 = first camera)
+  exposure: -6                # negative = short exposure (for bright sky)
   width: 640
   height: 480
 
 mount:
+  backend: "ascom"              # "ascom" (Windows) | "indi" (RPi/Linux) | "mock" (tests)
   driver: "ASCOM.CPWI.Telescope"
   move_rate_deg_per_sec: 1.0    # rate used during calibration moves
-  calibration_move_deg: 2.0    # how many degrees to move per calibration step
+  calibration_move_deg: 2.0     # how many degrees to move per calibration step
+
+# INDI connection — only used when mount.backend = "indi"
+indi:
+  host: "localhost"             # IP address of the Raspberry Pi on local network
+  port: 7624                    # default INDI server port
+  device_name: "Telescope Simulator"  # must match indiserver output exactly
+
+# ---------------------------------------------------------------------------
+# Logging configuration
+# ---------------------------------------------------------------------------
+logging:
+  level: "INFO"               # console log level: DEBUG | INFO | WARNING | ERROR
+  file: "telescope.log"       # log file path (set to null to disable file logging)
+  file_level: "DEBUG"         # file log level (usually more verbose than console)
 
 # ---------------------------------------------------------------------------
 # Calibration results — written automatically by calibration.py

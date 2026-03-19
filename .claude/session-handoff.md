@@ -1,55 +1,89 @@
-# Session Handoff — 2026-03-17
+# Session Handoff — 2026-03-19
 
 ## 🎯 Current Task
-ניתוח פרויקט TelescopeAI לפי מסמך האפיון (SRS) — זיהוי פערים והצעות שיפור
+ריפקטורינג ארכיטקטורה מלא של TelescopeAI — הושלם!
 
 ## ✅ Completed This Session
-- קריאת כל קבצי הפרויקט (tracker.py, main.py, config.yaml, calibration.py, find_landmarks.py, pid_controller.py)
-- ניתוח מעמיק מול מסמך האפיון
-- זיהוי בעיות קריטיות, שיפורי ארכיטקטורה, ופיצ'רים חסרים
-- כתיבת תוכנית שיפור מלאה
+- **Phase 4 — Camera Abstraction Layer:**
+  - `camera/base.py` — `CameraDriver` ABC
+  - `camera/opencv_camera.py` — webcam (CAP_DSHOW/V4L2 auto-select)
+  - `camera/zwo_camera.py` — ZWO ASI183MC Pro
+  - `camera/mock_camera.py` — Lissajous dot generator לבדיקות PID
+  - `camera/__init__.py` — `camera_factory(cfg)`
+  - `core/tracker.py` — tracker מחודש עם `TelescopeDriver` + `CameraDriver` ABCs
 
-## 🔧 Key Decisions Made
-- לא בוצעו שינויים בקוד בסשן זה — רק ניתוח
-- עדיפות #1: config unification
-- עדיפות #2: geometry.py משותף
-
-## 📁 Important Files Touched
-- `.claude/session-handoff.md` — קובץ זה
+- **Phase 5 — Session + Main + Tests:**
+  - `core/session.py` — `TelescopeSession` (context manager, owns scope+camera lifecycle)
+  - `main.py` — שוכתב מחדש: `driver_factory()`, `camera_factory()`, `setup_logging()`, ללא win32com ישיר
+  - `tests/test_hardware.py` — 14 tests ✅
+  - `tests/test_camera.py` — 11 tests ✅
+  - `tests/test_tracker.py` — 5 tests (PID + integration) ✅
+  - **30/30 tests passing**
 
 ## ❗ Open Issues / Next Steps
 
-### 🔴 קריטי
-1. **Config Unification** — `main.py` ו-`tracker.py` מכילים hardcoded values שלא מסונכרנות עם `config.yaml`:
-   - `main.py`: `MY_LAT = 32.1065`, `MY_LON = 35.2070`, `MY_ALT = 713`
-   - `tracker.py`: `PIXEL_SCALE = 0.094`, `MOVEMENT_THRESHOLD = 50`, `MAX_PATIENCE = 60`
-   - **פתרון:** לטעון ערכים מ-`config.yaml` בתחילת כל קובץ
+### 🟡 requirements.txt — עדכון
+קיים requirements.txt? צריך לבדוק ולעדכן עם:
+```
+opencv-python
+skyfield
+pyyaml
+pytest
+zwoasi  # optional — ZWO only
+pywin32  # optional — ASCOM/Windows only
+```
 
-2. **כפילות גיאומטריה** — `haversine()`, `true_bearing()`, `apply_refraction()` כתובות פעמיים:
-   - **פתרון:** קובץ `utils/geometry.py` משותף
+### 🟡 tracker.py הישן — עדיין קיים
+`telescopAIproject/tracker.py` הישן עדיין קיים (לא נמחק).
+`core/tracker.py` הוא הגרסה החדשה.
+כדאי למחוק / להוסיף deprecation warning.
 
-### 🟡 חשוב
-3. **Logging** — להחליף `print()` ב-`logging` (עם רמות, timestamps, קבצי לוג)
-4. **TelescopeDriver ABC** — שכבת הפשטה לתמיכה ב-ASCOM (Windows) + INDI (RPi/Linux) + MockDriver (בדיקות)
+### 🟢 הכל עובד — מוכן לבדיקה על חומרה אמיתית
 
-### 🟢 שיפורים מהאפיון
-5. Smart Auto-Exposure (חשיפה קבועה כרגע)
-6. Virtual Binning/Scaling
-7. מעקב אסטרונומי רציף (כרגע רק Slew, אין תיקון תנועה)
-8. Web GUI (Streamlit / Flask)
-
-## 🐛 Errors Encountered & Solutions
-- אין שגיאות — סשן ניתוח בלבד
+## 📁 Important Files Touched
+- `camera/base.py` — חדש ✅
+- `camera/opencv_camera.py` — חדש ✅
+- `camera/zwo_camera.py` — חדש ✅
+- `camera/mock_camera.py` — חדש ✅
+- `camera/__init__.py` — מעודכן (camera_factory) ✅
+- `core/tracker.py` — חדש (גרסה מחודשת) ✅
+- `core/session.py` — חדש ✅
+- `main.py` — שוכתב מחדש ✅
+- `tests/test_hardware.py` — חדש ✅
+- `tests/test_camera.py` — חדש ✅
+- `tests/test_tracker.py` — חדש ✅
 
 ## 💬 Context for Next Session
-הבעיה הכי דחופה: `main.py` ו-`tracker.py` מכילים ערכי קונפיגורציה hardcoded שלא מסונכרנים עם `config.yaml`. שינוי ב-config.yaml **לא ישפיע** על ריצה בפועל! זה הצעד הראשון שצריך לתקן.
-
-מבנה תיקיות מוצע לעתיד:
+מבנה הפרויקט הסופי:
 ```
 telescopAIproject/
-├── core/          (tracker.py, pid_controller.py, astronomical.py)
-├── hardware/      (ascom_driver.py, indi_driver.py, mock_driver.py)
-├── utils/         (config.py, geometry.py, logger.py)
-├── calibration/   (calibration.py, find_landmarks.py)
-└── tests/
+├── main.py                ✅ (driver_factory, camera_factory, setup_logging)
+├── calibration.py         ✅
+├── find_landmarks.py      ✅
+├── tracker.py             ⚠️  ישן — כדאי למחוק (הגרסה החדשה ב-core/tracker.py)
+├── config.yaml            ✅
+├── core/
+│   ├── pid_controller.py  ✅
+│   ├── tracker.py         ✅ (גרסה חדשה)
+│   └── session.py         ✅
+├── hardware/              ✅ COMPLETE + נבדק
+│   ├── base.py
+│   ├── ascom_driver.py
+│   ├── indi_driver.py
+│   ├── mock_driver.py
+│   └── __init__.py
+├── camera/                ✅ COMPLETE + נבדק
+│   ├── base.py
+│   ├── opencv_camera.py
+│   ├── zwo_camera.py
+│   ├── mock_camera.py
+│   └── __init__.py
+├── utils/                 ✅ COMPLETE
+│   ├── config.py
+│   ├── geometry.py
+│   └── logger.py
+└── tests/                 ✅ 30/30 passing
+    ├── test_hardware.py
+    ├── test_camera.py
+    └── test_tracker.py
 ```

@@ -24,27 +24,17 @@ import math
 import sys
 import time
 from datetime import datetime
-from pathlib import Path
 
 import cv2
 import numpy as np
-import yaml
 
-CONFIG_PATH = Path("config.yaml")
-
-
-# ── config helpers ────────────────────────────────────────────────────────────
-
-def load_config() -> dict:
-    return yaml.safe_load(CONFIG_PATH.read_text(encoding="utf-8"))
+from utils.config import load_config, save_config as _save_config
+from utils.geometry import landmark_az_alt
 
 
 def save_config(cfg: dict) -> None:
-    CONFIG_PATH.write_text(
-        yaml.dump(cfg, allow_unicode=True, sort_keys=False),
-        encoding="utf-8"
-    )
-    print(f"[OK] Results saved to {CONFIG_PATH}")
+    _save_config(cfg)
+    print("[OK] Results saved to config.yaml")
 
 
 # ── hardware helpers ──────────────────────────────────────────────────────────
@@ -90,42 +80,6 @@ def stop_mount(scope) -> None:
         scope.MoveAxis(1, 0.0)
     except Exception:
         pass
-
-
-# ── geometry helpers ──────────────────────────────────────────────────────────
-
-def haversine(lat1, lon1, lat2, lon2) -> float:
-    R = 6_371_000
-    phi1, phi2 = math.radians(lat1), math.radians(lat2)
-    dphi   = math.radians(lat2 - lat1)
-    dlambda = math.radians(lon2 - lon1)
-    a = math.sin(dphi / 2)**2 + math.cos(phi1)*math.cos(phi2)*math.sin(dlambda / 2)**2
-    return 2 * R * math.asin(math.sqrt(a))
-
-
-def true_bearing(lat1, lon1, lat2, lon2) -> float:
-    lat1r, lat2r = math.radians(lat1), math.radians(lat2)
-    dlon = math.radians(lon2 - lon1)
-    x = math.sin(dlon) * math.cos(lat2r)
-    y = math.cos(lat1r)*math.sin(lat2r) - math.sin(lat1r)*math.cos(lat2r)*math.cos(dlon)
-    return math.degrees(math.atan2(x, y)) % 360
-
-
-def apply_refraction(alt_deg: float) -> float:
-    """Bennett's formula — corrects for atmospheric bending near the horizon."""
-    if alt_deg < -0.5:
-        return alt_deg
-    r = 1.02 / math.tan(math.radians(alt_deg + 10.3 / (alt_deg + 5.11)))
-    return alt_deg + r / 60.0
-
-
-def landmark_az_alt(obs: dict, lm: dict) -> tuple[float, float, float]:
-    """Return (azimuth°, apparent_altitude°, distance_m) for a landmark."""
-    dist = haversine(obs["latitude"], obs["longitude"], lm["lat"], lm["lon"])
-    az   = true_bearing(obs["latitude"], obs["longitude"], lm["lat"], lm["lon"])
-    h    = lm["alt_m"] - obs["altitude_m"]
-    alt  = apply_refraction(math.degrees(math.atan2(h, dist)))
-    return az, alt, dist
 
 
 # ── visual helpers ────────────────────────────────────────────────────────────

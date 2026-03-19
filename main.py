@@ -1,154 +1,145 @@
-import win32com.client
+"""
+main.py — TelescopeAI entry point
+
+Interactive CLI for controlling the telescope.
+Reads config.yaml for mount/camera backend, location, and logging settings.
+
+Commands:
+    track       — start camera tracker (locks onto moving target)
+    gps         — slew to a GPS coordinate (lat/lon/alt)
+    north       — slew to North at minimum safe altitude
+    moon        — slew to Moon (sets Lunar tracking rate)
+    mars / jupiter / saturn / venus — slew to solar system body
+    exit        — disconnect and quit
+
+Run:
+    python main.py
+"""
 from skyfield.api import load, Topos
-import time
-import threading
-import tracker  # וודא שהקובץ tracker.py באותה תיקייה
+
 from utils.config import load_config
+from utils.logger import setup_logging, get_logger
+from core.session import TelescopeSession
 
-# --- טעינת קונפיגורציה ---
-_cfg = load_config()
-MY_LAT = _cfg['location']['latitude']
-MY_LON = _cfg['location']['longitude']
-MY_ALT = _cfg['location']['altitude_m']
+# ── Boot ──────────────────────────────────────────────────────────────────────
 
-# --- הגדרות בטיחות ---
-MIN_SAFE_ALTITUDE = 10.0
+cfg = load_config()
+setup_logging(cfg)
+logger = get_logger(__name__)
+
+MY_LAT = cfg['location']['latitude']
+MY_LON = cfg['location']['longitude']
+MY_ALT = cfg['location']['altitude_m']
 
 
-def safe_move(scope, az, alt, target_name="Target"):
-    """
-    פונקציה שמבצעת תנועה (Slew) ומאפשרת למשתמש לכתוב stop כדי לעצור באמצע.
-    """
-    # בדיקת בטיחות: לא לכוון מתחת לגובה מינימלי
-    if alt < MIN_SAFE_ALTITUDE:
-        print(f"ERROR: Alt={alt:.1f}° is below MIN_SAFE_ALTITUDE ({MIN_SAFE_ALTITUDE}°). Slew aborted.")
-        return
+# ── Skyfield helpers ──────────────────────────────────────────────────────────
 
-    try:
-        print(f"\n>>> Moving to {target_name} (Az: {az:.2f}, Alt: {alt:.2f})...")
+def _load_skyfield():
+    planets  = load('de421.bsp')
+    earth    = planets['earth']
+    ts       = load.timescale()
+    observer = earth + Topos(
+        latitude_degrees=MY_LAT,
+        longitude_degrees=MY_LON,
+        elevation_m=MY_ALT,
+    )
+    return planets, observer, ts
 
-        if scope.AtPark:
-            scope.Unpark()
 
-        if not scope.Tracking:
-            scope.Tracking = True
+# ── Main control loop ─────────────────────────────────────────────────────────
 
-        scope.SlewToAltAzAsync(float(az), float(alt))
-        time.sleep(1.0)
+def run_telescope_control() -> None:
+    logger.info("TelescopeAI starting")
+    print("Loading Skyfield ephemeris...")
+    planets, observer, ts = _load_skyfield()
 
-        stop_flag = []
+    with TelescopeSession(cfg) as session:
+        while True:
+            print("\n==============================")
+            print("--- TELESCOPE CONTROL MENU ---")
+            print("Commands: track  gps  north  moon  mars  jupiter  saturn  venus  exit")
+            user_input = input("Command: ").strip().lower()
 
-        def wait_for_stop():
-            print("   [Type 'stop' + Enter to ABORT, or wait for arrival]")
-            user_text = input()
-            if user_text.strip().lower() == 'stop':
-                stop_flag.append(True)
-
-        t = threading.Thread(target=wait_for_stop)
-        t.daemon = True
-        t.start()
-
-        aborted = False
-        while scope.Slewing:
-            if stop_flag:
-                print("\n!!! STOP COMMAND RECEIVED !!!")
-                scope.AbortSlew()
-                aborted = True
+            if user_input == "exit":
+                logger.info("User requested exit")
                 break
-            time.sleep(0.2)
 
-        if not aborted:
-            print(f"\n[V] Reached {target_name}.")
-            print("(Press Enter to continue back to menu...)")
+            # ── Camera tracker ────────────────────────────────────────────────
+            if user_input == "track":
+                print("\n>>> Starting Camera Tracker...")
+                session.start_tracking()
+                continue
 
-    except Exception as e:
-        print(f"Error during movement: {e}")
-        try: scope.AbortSlew()
-        except: pass
+            # ── GPS coordinate slew ───────────────────────────────────────────
+            if user_input == "gps":
+                try:
+                    lat   = float(input("Target Latitude:   "))
+                    lon   = float(input("Target Longitude:  "))
+                    alt_m = float(input("Target Altitude (m): "))
 
+                    target = planets['earth'] + Topos(
+                        latitude_degrees=lat,
+                        longitude_degrees=lon,
+                        elevation_m=alt_m,
+                    )
+                    t = ts.now()
+                    alt_obj, az_obj, dist = observer.at(t).observe(target).apparent().altaz()
+                    print(f"Calculated: Az={az_obj.degrees:.2f}°  Alt={alt_obj.degrees:.2f}°  "
+                          f"Dist={dist.km:.1f} km")
 
-def run_telescope_control():
-    print("1. Initializing ASCOM...")
-    try:
-        scope = win32com.client.Dispatch("ASCOM.CPWI.Telescope")
-        scope.Connected = True
-        print("2. SUCCESS! Telescope connected.")
-    except Exception as e:
-        print(f"!!! ERROR: {e}")
-        return
+                    if alt_obj.degrees < 0:
+                        print("ERROR: Target is below the horizon.")
+                        continue
 
-    print("Loading Skyfield data...")
-    planets = load('de421.bsp')
-    earth = planets['earth']
-    ts = load.timescale()
-    my_location = earth + Topos(latitude_degrees=MY_LAT, longitude_degrees=MY_LON, elevation_m=MY_ALT)
+                    if input("Slew? (y/n): ").strip().lower() == "y":
+                        session.slew_to("GPS Target", az_obj.degrees, alt_obj.degrees)
 
-    while True:
-        print("\n==============================")
-        print("--- TELESCOPE CONTROL MENU ---")
-        print("Options: track, gps, north, moon, mars/jupiter..., exit")
-        user_input = input("Command: ").strip().lower()
+                except ValueError as exc:
+                    print(f"Invalid input: {exc}")
+                except Exception as exc:
+                    logger.error("GPS slew error: %s", exc)
+                    print(f"Error: {exc}")
+                continue
 
-        if user_input == 'exit':
-            try: scope.AbortSlew()
-            except: pass
-            break
+            # ── North ─────────────────────────────────────────────────────────
+            if user_input == "north":
+                session.slew_to("North", az=0.0, alt=10.0)
+                continue
 
-        if user_input == 'track':
-            print("\n>>> Starting Camera Tracker...")
-            tracker.start_tracking(scope)
-            continue
+            # ── Solar system bodies ───────────────────────────────────────────
+            BODY_KEYS = {
+                "moon":    ("moon",              1),   # (skyfield key, tracking rate)
+                "mars":    ("mars barycenter",   0),
+                "jupiter": ("jupiter barycenter", 0),
+                "saturn":  ("saturn barycenter", 0),
+                "venus":   ("venus",              0),
+            }
+            if user_input in BODY_KEYS:
+                body_key, track_rate = BODY_KEYS[user_input]
+                try:
+                    t = ts.now()
+                    alt_obj, az_obj, _ = (
+                        observer.at(t).observe(planets[body_key]).apparent().altaz()
+                    )
+                    print(f"  {user_input.upper()}  Az={az_obj.degrees:.2f}°  "
+                          f"Alt={alt_obj.degrees:.2f}°")
 
-        if user_input == 'gps':
-            try:
-                lat = float(input("Target Latitude: "))
-                lon = float(input("Target Longitude: "))
-                alt_m = float(input("Target Altitude (m): "))
+                    if alt_obj.degrees <= 0:
+                        print("Target is below the horizon.")
+                        continue
 
-                target = earth + Topos(latitude_degrees=lat, longitude_degrees=lon, elevation_m=alt_m)
-                t = ts.now()
-                alt, az, distance = my_location.at(t).observe(target).apparent().altaz()
+                    session.scope.tracking_rate = track_rate
 
-                print(f"Calculated: Az={az.degrees:.2f}, Alt={alt.degrees:.2f}, Dist={distance.km:.2f}km")
+                    if input("Slew? (y/n): ").strip().lower() == "y":
+                        session.slew_to(user_input.upper(), az_obj.degrees, alt_obj.degrees)
 
-                if alt.degrees < 0:
-                    print("ERROR: Target is BELOW HORIZON.")
-                    continue
+                except Exception as exc:
+                    logger.error("Body slew error (%s): %s", user_input, exc)
+                    print(f"Error: {exc}")
+                continue
 
-                if input("Slew? (y/n): ") == 'y':
-                    safe_move(scope, az.degrees, alt.degrees, "GPS Target")
+            print(f"Unknown command: '{user_input}'")
 
-            except Exception as e:
-                print(f"Error: {e}")
-            continue
-
-        if user_input == 'north':
-            safe_move(scope, 0.0, MIN_SAFE_ALTITUDE, "North")
-            continue
-
-        if user_input in ['moon', 'mars', 'jupiter', 'saturn', 'venus']:
-            try:
-                target_key = 'moon' if user_input == 'moon' else f"{user_input} barycenter"
-                t = ts.now()
-                alt, az, _ = my_location.at(t).observe(planets[target_key]).apparent().altaz()
-
-                print(f"Target: {user_input.upper()} (Alt: {alt.degrees:.2f})")
-                if alt.degrees <= 0:
-                    print("Target is below horizon.")
-                    continue
-
-                if user_input == 'moon':
-                    try: scope.TrackingRate = 1  # Lunar
-                    except: pass
-                else:
-                    try: scope.TrackingRate = 0  # Sidereal
-                    except: pass
-
-                if input("Slew? (y/n): ") == 'y':
-                    safe_move(scope, az.degrees, alt.degrees, user_input.upper())
-
-            except Exception as e:
-                print(f"Error: {e}")
 
 if __name__ == "__main__":
     run_telescope_control()

@@ -11,56 +11,19 @@ Usage:
     python find_landmarks.py --add
 """
 import argparse
-import math
 from datetime import datetime
 from pathlib import Path
 
 import yaml
 
+from utils.geometry import landmark_az_alt
+
 CONFIG_PATH = Path("config.yaml")
-
-
-# ── geometry helpers ─────────────────────────────────────────────────────────
-
-def haversine(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    """Great-circle distance in metres (WGS-84 sphere)."""
-    R = 6_371_000
-    phi1, phi2 = math.radians(lat1), math.radians(lat2)
-    dphi   = math.radians(lat2 - lat1)
-    dlambda = math.radians(lon2 - lon1)
-    a = math.sin(dphi / 2) ** 2 + math.cos(phi1) * math.cos(phi2) * math.sin(dlambda / 2) ** 2
-    return 2 * R * math.asin(math.sqrt(a))
-
-
-def true_bearing(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
-    """True (geographic) bearing in degrees, 0 = North."""
-    lat1r, lat2r = math.radians(lat1), math.radians(lat2)
-    dlon = math.radians(lon2 - lon1)
-    x = math.sin(dlon) * math.cos(lat2r)
-    y = math.cos(lat1r) * math.sin(lat2r) - math.sin(lat1r) * math.cos(lat2r) * math.cos(dlon)
-    return math.degrees(math.atan2(x, y)) % 360
-
-
-def elevation_angle(dist_m: float, h_diff_m: float) -> float:
-    """Geometric elevation angle in degrees."""
-    return math.degrees(math.atan2(h_diff_m, dist_m))
-
-
-def apply_refraction(alt_deg: float) -> float:
-    """Bennett's atmospheric refraction correction (adds a few arcmin near horizon)."""
-    if alt_deg < -0.5:
-        return alt_deg
-    r = 1.02 / math.tan(math.radians(alt_deg + 10.3 / (alt_deg + 5.11)))
-    return alt_deg + r / 60.0
 
 
 def compute(obs: dict, lm: dict) -> tuple[float, float, float]:
     """Return (azimuth_deg, altitude_deg_apparent, distance_m) for a landmark."""
-    dist = haversine(obs["latitude"], obs["longitude"], lm["lat"], lm["lon"])
-    az   = true_bearing(obs["latitude"], obs["longitude"], lm["lat"], lm["lon"])
-    h    = lm["alt_m"] - obs["altitude_m"]
-    alt  = apply_refraction(elevation_angle(dist, h))
-    return az, alt, dist
+    return landmark_az_alt(obs, lm)
 
 
 # ── calibration quality scoring ───────────────────────────────────────────────
