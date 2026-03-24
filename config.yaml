@@ -61,9 +61,23 @@ mount:
 
 # INDI connection — only used when mount.backend = "indi"
 indi:
-  host: "localhost"             # IP address of the Raspberry Pi on local network
+  host: "localhost"             # "localhost" when running on RPi; RPi IP when running remotely
   port: 7624                    # default INDI server port
   device_name: "Telescope Simulator"  # must match indiserver output exactly
+
+# ---------------------------------------------------------------------------
+# Stream server — RPi MJPEG output (main_rpi.py streams, main_remote.py reads)
+# ---------------------------------------------------------------------------
+stream:
+  port: 8080
+  quality: 70                   # JPEG quality 0-100 (lower = less bandwidth)
+  fps_limit: 20                 # informational — not enforced yet
+
+# ---------------------------------------------------------------------------
+# RPi network — used by main_remote.py (Windows) to locate the stream
+# ---------------------------------------------------------------------------
+rpi:
+  host: "kcg.local"             # hostname or IP of the Raspberry Pi
 
 # ---------------------------------------------------------------------------
 # Logging configuration

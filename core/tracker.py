@@ -37,17 +37,25 @@ def start_tracking(
     scope: TelescopeDriver,
     camera: CameraDriver,
     cfg: dict,
+    on_frame=None,
+    headless: bool = False,
+    stop_event=None,
 ) -> None:
     """
-    Run the tracking loop until the user presses 'q'.
+    Run the tracking loop until the user presses 'q' (or stop_event is set).
 
     The camera and scope must already be opened/connected before calling.
     Releases neither — the caller is responsible for cleanup.
 
     Args:
-        scope:  Connected TelescopeDriver (ASCOM / INDI / Mock).
-        camera: Opened CameraDriver (OpenCV / ZWO / Mock).
-        cfg:    Full config dict as returned by load_config().
+        scope:       Connected TelescopeDriver (ASCOM / INDI / Mock).
+        camera:      Opened CameraDriver (OpenCV / ZWO / Mock).
+        cfg:         Full config dict as returned by load_config().
+        on_frame:    Optional callback(frame) called with each annotated frame.
+                     When provided, cv2.imshow is skipped (headless streaming).
+        headless:    If True, skip cv2.imshow/waitKey entirely (RPi mode).
+                     Loop runs until KeyboardInterrupt or stop_event is set.
+        stop_event:  threading.Event — when set, the loop exits cleanly.
     """
     tracking_cfg = cfg.get("tracking", {})
     pixel_scale  = tracking_cfg.get("pixel_scale", 0.094)          # deg/pixel
@@ -169,19 +177,27 @@ def start_tracking(
             # ==================== Crosshair overlay ====================
             cv2.line(frame, (frame_cx, 0),      (frame_cx, h), (80, 80, 80), 1)
             cv2.line(frame, (0, frame_cy),       (w, frame_cy), (80, 80, 80), 1)
-            cv2.imshow("TelescopeAI Tracker", frame)
 
-            key = cv2.waitKey(1) & 0xFF
-            if key == ord("q"):
-                break
-            if key == ord("r"):
-                _stop_mount(scope)
-                pid_az.reset()
-                pid_alt.reset()
-                is_tracking      = False
-                csrt_tracker     = None
-                potential_target = None
-                logger.info("[TRACKER] Manual reset")
+            if on_frame is not None:
+                on_frame(frame)
+            elif not headless:
+                cv2.imshow("TelescopeAI Tracker", frame)
+
+            if headless:
+                if stop_event is not None and stop_event.is_set():
+                    break
+            else:
+                key = cv2.waitKey(1) & 0xFF
+                if key == ord("q"):
+                    break
+                if key == ord("r"):
+                    _stop_mount(scope)
+                    pid_az.reset()
+                    pid_alt.reset()
+                    is_tracking      = False
+                    csrt_tracker     = None
+                    potential_target = None
+                    logger.info("[TRACKER] Manual reset")
 
     finally:
         _stop_mount(scope)
