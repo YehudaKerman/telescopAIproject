@@ -88,6 +88,28 @@ logging:
   file_level: "DEBUG"         # file log level (usually more verbose than console)
 
 # ---------------------------------------------------------------------------
+# Simulation mode — used by main_sim.py
+# Switch camera.backend and mount.backend to these values before running.
+# ---------------------------------------------------------------------------
+#
+# To run simulation:
+#   1. Copy a video to the RPi:
+#        scp your_video.mp4 kcg@kcg.local:/home/kcg/sim_videos/
+#   2. Edit camera section below (or override here):
+#        camera.backend:    "video_file"
+#        camera.video_path: "/home/kcg/sim_videos/your_video.mp4"
+#        mount.backend:     "simulated"
+#   3. Run on RPi:
+#        .venv/bin/python main_sim.py
+#   4. Watch on Windows:
+#        python main_remote.py
+#
+simulation:
+  video_path: "/home/kcg/sim_videos/drone.mp4"   # default test video
+  loop: true                                        # restart video at end
+  fps_override: null                                # null = use video's native FPS
+
+# ---------------------------------------------------------------------------
 # Calibration results — written automatically by calibration.py
 # ---------------------------------------------------------------------------
 calibration:

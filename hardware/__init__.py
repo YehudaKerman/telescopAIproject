@@ -60,9 +60,14 @@ def driver_factory(cfg: dict) -> TelescopeDriver:
         logger.info("[DRIVER_FACTORY] Using MockTelescopeDriver (no hardware)")
         return MockTelescopeDriver()
 
+    elif backend == "simulated":
+        from hardware.simulated_driver import SimulatedDriver
+        logger.info("[DRIVER_FACTORY] Using SimulatedDriver (video simulation mode)")
+        return SimulatedDriver()
+
     else:
         raise ValueError(
             f"Unknown mount backend: '{backend}'. "
-            "Valid options: 'ascom', 'indi', 'mock'. "
+            "Valid options: 'ascom', 'indi', 'mock', 'simulated'. "
             "Check mount.backend in config.yaml."
         )

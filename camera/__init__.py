@@ -63,9 +63,17 @@ def camera_factory(cfg: dict) -> CameraDriver:
             height=camera_cfg.get("height", 480),
         )
 
+    if backend == "video_file":
+        from camera.video_file_camera import VideoFileCamera
+        return VideoFileCamera(
+            path=camera_cfg.get("video_path", ""),
+            loop=camera_cfg.get("loop", True),
+            fps_override=camera_cfg.get("fps_override") or None,
+        )
+
     raise ValueError(
         f"Unknown camera backend '{backend}'. "
-        "Valid options: 'opencv', 'zwo', 'mock'."
+        "Valid options: 'opencv', 'zwo', 'mock', 'video_file'."
     )
 
 
