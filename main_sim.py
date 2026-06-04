@@ -108,7 +108,7 @@ def main() -> None:
         cam.open()
         logger.info("[SIM] Ready. Starting simulation tracker (headless)...")
 
-        def push_frame(frame: cv2.typing.MatLike) -> None:
+        def push_frame(frame) -> None:
             """
             Called by tracker on every annotated frame.
             Adds the telescope pointing crosshair before pushing to stream.

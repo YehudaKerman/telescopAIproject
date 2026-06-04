@@ -101,7 +101,7 @@ class VideoFileCamera(CameraDriver):
 
     # ── Frame delivery ────────────────────────────────────────────────────────
 
-    def read(self) -> tuple[bool, cv2.typing.MatLike | None]:
+    def read(self) -> tuple[bool, object]:
         """
         Return the next frame, sleeping until the correct wall-clock time
         so that playback matches the video's native FPS.
