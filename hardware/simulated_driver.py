@@ -184,6 +184,11 @@ class SimulatedDriver(TelescopeDriver):
         with self._lock:
             return self._az_offset_deg, self._alt_offset_deg
 
+    def get_rates(self) -> tuple[float, float]:
+        """Returns current (az_rate, alt_rate) in deg/sec."""
+        with self._lock:
+            return self._az_rate, self._alt_rate
+
     def reset_offset(self) -> None:
         """Reset telescope pointing to frame centre (offset = 0, 0)."""
         with self._lock:

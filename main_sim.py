@@ -120,15 +120,25 @@ def main() -> None:
 
             _draw_scope_crosshair(frame, scope_cx, scope_cy)
 
-            # HUD: pointing offset in degrees and arcseconds
+            # HUD: accumulated pointing offset
             az_off, alt_off = driver.get_offset_deg()
             az_as  = az_off  * 3600
             alt_as = alt_off * 3600
             cv2.putText(
                 frame,
-                f"SCOPE  Az={az_as:+.0f}\"  Alt={alt_as:+.0f}\"",
-                (10, frame.shape[0] - 10),
-                cv2.FONT_HERSHEY_SIMPLEX, 0.5, _SCOPE_COLOUR, 1,
+                f"OFFSET  Az={az_as:+.0f}\"  Alt={alt_as:+.0f}\"",
+                (10, frame.shape[0] - 30),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.55, _SCOPE_COLOUR, 2,
+            )
+
+            # HUD: current motor rates (deg/sec)
+            az_rate, alt_rate = driver.get_rates()
+            rate_colour = (0, 255, 0) if (abs(az_rate) > 0.001 or abs(alt_rate) > 0.001) else (80, 80, 80)
+            cv2.putText(
+                frame,
+                f"RATE   Az={az_rate:+.3f}  Alt={alt_rate:+.3f} deg/s",
+                (10, frame.shape[0] - 8),
+                cv2.FONT_HERSHEY_SIMPLEX, 0.55, rate_colour, 2,
             )
 
             if not frame_queue.full():
