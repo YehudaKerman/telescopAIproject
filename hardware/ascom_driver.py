@@ -142,6 +142,11 @@ class ASCOMTelescopeDriver(TelescopeDriver):
             self._com.MoveAxis(axis, float(rate))
         except Exception as exc:
             logger.error("[MOVE_AXIS] Failed on axis %d: %s", axis, exc)
+            # Swallowing is survivable while starting motion — the tracker
+            # re-commands every frame. It is not survivable while stopping:
+            # the axis keeps slewing and every caller still reads success.
+            if float(rate) == 0.0:
+                raise
 
     def abort_slew(self) -> None:
         logger.info("[ABORT] AbortSlew called")
