@@ -207,13 +207,30 @@ def start_tracking(
 
 # ── Internal helpers ───────────────────────────────────────────────────────────
 
-def _stop_mount(scope: TelescopeDriver) -> None:
-    """Stop both axes safely — called in finally blocks."""
-    try:
-        scope.move_axis(0, 0.0)
-        scope.move_axis(1, 0.0)
-    except Exception:
-        pass
+def _stop_mount(scope: TelescopeDriver) -> bool:
+    """Stop both axes — called in finally blocks. True only if both stopped.
+
+    Each axis gets its own attempt: sharing one try meant a throw on axis 0
+    left axis 1 slewing. Failures are logged rather than swallowed, so a mount
+    that did not stop cannot look like one that did.
+    """
+    stopped = True
+    for axis in (0, 1):
+        try:
+            scope.move_axis(axis, 0.0)
+        except Exception as exc:
+            stopped = False
+            logger.error("[STOP] FAILED on axis %d: %s", axis, exc)
+    if not stopped:
+        # Second, independent mechanism — abort may get through when a
+        # per-axis rate command cannot.
+        try:
+            scope.abort_slew()
+            logger.warning("[STOP] fell back to abort_slew()")
+        except Exception as exc:
+            logger.critical("[STOP] abort_slew ALSO FAILED: %s — "
+                            "MOUNT MAY STILL BE MOVING", exc)
+    return stopped
 
 
 def _draw_tracking(

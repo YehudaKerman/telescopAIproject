@@ -74,12 +74,30 @@ def grab_gray(cap) -> np.ndarray:
     return cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY).astype(np.float32)
 
 
-def stop_mount(scope) -> None:
-    try:
-        scope.MoveAxis(0, 0.0)
-        scope.MoveAxis(1, 0.0)
-    except Exception:
-        pass
+def stop_mount(scope) -> bool:
+    """Stop both axes. Returns True only if every axis actually stopped.
+
+    Each axis gets its own attempt: sharing one try meant a throw on axis 0
+    left axis 1 slewing. A failure here is reported rather than swallowed —
+    a mount that did not stop must not look like one that did.
+    """
+    stopped = True
+    for axis in (0, 1):
+        try:
+            scope.MoveAxis(axis, 0.0)
+        except Exception as exc:
+            stopped = False
+            print(f"!! STOP FAILED on axis {axis}: {exc}", file=sys.stderr)
+    if not stopped:
+        # Second, independent mechanism — the driver may abort even when a
+        # per-axis rate command cannot get through.
+        try:
+            scope.AbortSlew()
+            print("!! fell back to AbortSlew()", file=sys.stderr)
+        except Exception as exc:
+            print(f"!! AbortSlew ALSO FAILED: {exc} — MOUNT MAY STILL BE MOVING",
+                  file=sys.stderr)
+    return stopped
 
 
 # ── visual helpers ────────────────────────────────────────────────────────────
@@ -207,6 +225,10 @@ def calibrate_pixel_scale_and_roll(scope, cfg: dict) -> dict | None:
         results["camera_roll_deg"] = round(camera_roll, 3)
 
     finally:
+        # Motion starts in this function (MoveAxis above), so it must also be
+        # stopped here. Relying on main()'s finally left the mount slewing for
+        # as long as the exception took to propagate two frames up.
+        stop_mount(scope)
         cap.release()
         cv2.destroyAllWindows()
 
