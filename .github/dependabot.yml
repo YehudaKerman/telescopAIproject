@@ -1,0 +1,12 @@
+# Dependabot: weekly version updates; minor+patch grouped into one PR per ecosystem.
+# Security alerts are a separate repo setting (Settings > Code security > Dependabot alerts).
+version: 2
+updates:
+  - package-ecosystem: "pip"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+    open-pull-requests-limit: 5
+    groups:
+      minor-and-patch:
+        update-types: ["minor", "patch"]
