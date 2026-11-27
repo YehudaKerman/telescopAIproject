@@ -13,7 +13,7 @@ numpy>=1.24
 skyfield>=1.46
 
 # Configuration
-pyyaml>=6.0
+pyyaml>=6.0.4
 
 # Testing
 pytest>=8.0
