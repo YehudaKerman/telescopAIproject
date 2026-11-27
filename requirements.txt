@@ -6,7 +6,7 @@
 #   INDI (Linux/RPi): pip install pyindi-client
 
 # Computer vision and tracking
-opencv-python>=4.8
+opencv-python>=5.1.0.95
 numpy>=1.24
 
 # Astronomy / ephemeris
