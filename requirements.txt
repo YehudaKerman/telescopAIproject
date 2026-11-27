@@ -16,7 +16,7 @@ skyfield>=1.46
 pyyaml>=6.0
 
 # Testing
-pytest>=8.0
+pytest>=9.2.0
 
 # ASCOM telescope driver — Windows only
 # pywin32>=306
